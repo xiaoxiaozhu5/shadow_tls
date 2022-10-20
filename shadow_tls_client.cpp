@@ -2,6 +2,7 @@
 
 #include "debug_helper.h"
 
+
 shadow_tls_client::shadow_tls_client()
 {
 	mbedtls_ctr_drbg_init(&ctr_drbg_);

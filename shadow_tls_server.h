@@ -15,6 +15,7 @@ class shadow_tls_server
 {
 public:
 	shadow_tls_server();
+	shadow_tls_server(const std::string& shadow_domain);
 	~shadow_tls_server();
 
 	int start_server(uint16_t port);
@@ -28,19 +29,29 @@ private:
 		int id;
 		SOCKET s;
 		HANDLE thread;
+		bool handshaked;
 		std::vector<uint8_t> data;
 		mbedtls_ssl_context	ssl_ctx;
+
+		client_info()
+		{
+			handshaked = false;
+			s = INVALID_SOCKET;
+			id = -1;
+		}
 	};
 
 private:
+	void init();
 	void listen_routine();
 	void client_routine(int id);
 
 private:
+	std::string shadow_doamin_;
 	SOCKET socket_listen_;
 
-	mbedtls_ctr_drbg_context g_ctr_drbg;
-	mbedtls_entropy_context g_entropy;
+	mbedtls_ctr_drbg_context ctr_drbg_;
+	mbedtls_entropy_context entropy_;
 
 	mbedtls_ssl_config srv_ssl_conf_;
 	mbedtls_x509_crt ca_crt_;
@@ -51,7 +62,7 @@ private:
 	bool shutdown_;
 	std::thread listen_thread_;
 	std::mutex client_mutex_;
-	//std::map<int, client_info> clients_;
 	std::map<int, client_info> clients_;
 };
+
 

@@ -140,19 +140,25 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="bio.cpp" />
     <ClCompile Include="debug_helper.cpp" />
+    <ClCompile Include="shadow_client.cpp" />
     <ClCompile Include="shadow_tls.cpp" />
     <ClCompile Include="shadow_tls_client.cpp" />
     <ClCompile Include="shadow_tls_server.cpp" />
+    <ClCompile Include="socket_address.cpp" />
     <ClCompile Include="socket_select.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="bio.h" />
     <ClInclude Include="debug_helper.h" />
+    <ClInclude Include="shadow_client.h" />
     <ClInclude Include="shadow_tls_client.h" />
     <ClInclude Include="shadow_tls_server.h" />
+    <ClInclude Include="socket_address.h" />
     <ClInclude Include="socket_select.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

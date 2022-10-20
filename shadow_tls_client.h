@@ -3,7 +3,6 @@
 #include <string>
 
 #include <mbedtls/error.h>
-#include <mbedtls/debug.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
