@@ -23,12 +23,10 @@
 
 #include <cstdint>
 #include <string.h>
+#include <WinSock2.h>   // for socket_storage
 #include <ws2ipdef.h>
 #include <WS2tcpip.h>
 
-#ifdef _WIN32
-#include "WinSock2.h"   // for socket_storage
-#endif
 
 class socket_address {
 

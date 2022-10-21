@@ -36,25 +36,37 @@ struct record_layer
 int send_routine(void* ctx, const unsigned char* buf, size_t len)
 {
 	assert(len >= 5);
+	int send_len = 0;
 	auto context = static_cast<routine_context*>(ctx);
 	auto record = reinterpret_cast<record_layer*>(const_cast<unsigned char*>(buf));
 	switch (context->type)
 	{
-	case kContextServer: break;
-	case KContextClient: break;
+	case kContextServer: 
+		send_len = ::send(context->dst_sock, (const char*)buf, len, 0);
+		break;
+	case KContextClient: 
+		send_len = ::send(context->dst_sock, (const char*)buf, len, 0);
+		break;
 	default: break;
 	}
+	return send_len;
 }
 
 int recv_routine(void* ctx, unsigned char* buf, size_t len)
 {
 	assert(len >= 5);
+	int recv_len = 0;
 	auto context = static_cast<routine_context*>(ctx);
 	auto record = reinterpret_cast<record_layer*>(buf);
 	switch (context->type)
 	{
-	case kContextServer: break;
-	case KContextClient: break;
+	case kContextServer: 
+		recv_len = ::recv(context->dst_sock, (char*)buf, len, 0);
+		break;
+	case KContextClient: 
+		recv_len = ::recv(context->dst_sock, (char*)buf, len, 0);
+		break;
 	default: break;
 	}
+	return recv_len;
 }

@@ -7,6 +7,8 @@
 
 #include "debug_helper.h"
 
+#pragma warning(disable: 4996)
+
 typedef SSIZE_T ssize_t;
 
 
@@ -68,21 +70,24 @@ shadow_client::~shadow_client()
 	mbedtls_entropy_free(&entropy_);
 }
 
-int shadow_client::connect(const socket_address& _address, int& _errcode,
+SOCKET shadow_client::connect(const socket_address& _address, int& _errcode,
                            int32_t _timeout/*ms*/)
 {
 	SOCKET sock = connect_impl(_address, _errcode, _timeout);
-	if(sock == INVALID_SOCKET)
-	{
-		return -1;
-	}
+	socket_ = sock;
+	return sock;
+}
 
+int shadow_client::handshake()
+{
 	int res = 0;
 	bool hs_failed = false;
 	mbedtls_ssl_setup(&ssl_ctx_, &ssl_conf_);
 
-	routine_context *ctx = new routine_context();
+	routine_context* ctx = new routine_context();
 	ctx->type = KContextClient;
+	ctx->src_sock = socket_;
+	ctx->dst_sock = remote_socket_;
 	mbedtls_ssl_set_bio(&ssl_ctx_, ctx, send_routine, recv_routine, nullptr);
 	while ((res = mbedtls_ssl_handshake(&ssl_ctx_)) != 0)
 	{
@@ -93,11 +98,10 @@ int shadow_client::connect(const socket_address& _address, int& _errcode,
 			break;
 		}
 	}
-	if(hs_failed)
+	if (hs_failed)
 	{
 		return -1;
 	}
-
 	return 0;
 }
 
@@ -280,7 +284,6 @@ void shadow_client::init()
 		exit(1);
 	}
 
-	mbedtls_net_context net_ctx_;
 	mbedtls_ssl_init(&ssl_ctx_);
 	mbedtls_x509_crt_init(&ca_crt_);
 	mbedtls_ssl_config_init(&ssl_conf_);

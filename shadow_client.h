@@ -15,7 +15,8 @@ public:
 	shadow_client(int id);
 	~shadow_client();
 
-	int connect(const socket_address& _address, int& _errcode, int32_t _timeout = -1);
+	SOCKET connect(const socket_address& _address, int& _errcode, int32_t _timeout = -1);
+	int handshake();
 	int send(const void* _buffer, size_t _len, int& _errcode, int _timeout = -1);
 	int recv(std::string& _buffer, size_t _max_size, int& _errcode, int _timeout = -1, bool _wait_full_size = false);
 	void cancel();
@@ -28,6 +29,7 @@ private:
 	int relate_id;
 	bool handshaked_;
 	SOCKET socket_;
+	SOCKET remote_socket_;
 	SocketBreaker breaker_;
 
 	mbedtls_ctr_drbg_context ctr_drbg_;

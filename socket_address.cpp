@@ -28,6 +28,8 @@
 
 #include "debug_helper.h"
 
+#pragma warning(disable: 4996)
+
 #define NS_INADDRSZ 4
 typedef unsigned int uint32;
 typedef int int32;

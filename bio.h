@@ -1,4 +1,5 @@
 #pragma once
+#include <winsock2.h>
 
 
 enum ContextType
@@ -10,7 +11,8 @@ enum ContextType
 struct routine_context
 {
 	ContextType type;
-
+	SOCKET src_sock;
+	SOCKET dst_sock;
 };
 
 int send_routine(void* ctx, const unsigned char* buf, size_t len);

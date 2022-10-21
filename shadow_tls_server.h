@@ -14,6 +14,7 @@
 class shadow_tls_server
 {
 public:
+	friend DWORD WINAPI thread_client(LPVOID lpThreadParameter);
 	shadow_tls_server();
 	shadow_tls_server(const std::string& shadow_domain);
 	~shadow_tls_server();

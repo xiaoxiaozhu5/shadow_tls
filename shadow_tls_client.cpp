@@ -60,6 +60,7 @@ int shadow_tls_client::connect(const std::string& server, const std::string& sha
 			res = MBEDTLS_ERR_SSL_BAD_CONFIG;
 			break;
 		}
+		debug_log("connect to %s:%s\n", address.c_str(), port.c_str());
 		res = mbedtls_net_connect(&net_ctx_, address.c_str(), port.c_str(), MBEDTLS_NET_PROTO_TCP);
 		if (0 != res)
 		{
@@ -111,7 +112,7 @@ bool shadow_tls_client::validate_address(const std::string& server)
 bool shadow_tls_client::split_address_to_ip_and_port(const std::string& server, std::string& address, std::string& port)
 {
 	auto pos = server.find(':');
-	address = server.substr(0, pos - 1);
+	address = server.substr(0, pos);
 	port = server.substr(pos + 1);
 	return true;
 }

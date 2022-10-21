@@ -15,6 +15,17 @@
 
 int g_client_id = 0;
 
+DWORD WINAPI thread_client(LPVOID lpThreadParameter)
+{
+	auto cli = static_cast<shadow_client*>(lpThreadParameter);
+	int ret = cli->handshake();
+	if (ret == -1)
+	{
+		debug_log("handshake to shadow domain failed\n");
+		return 0;
+	}
+}
+
 shadow_tls_server::shadow_tls_server()
 	: shadow_doamin_(DEFAULT_SHADOW_DOAMIN)
 	  , shutdown_(false)
@@ -125,9 +136,9 @@ void shadow_tls_server::listen_routine()
 	int ret = 0;
 	while (!shutdown_)
 	{
-		SOCKADDR_IN sock{};
-		int len{0};
-		SOCKET c = accept(socket_listen_, (sockaddr*)&sock, &len);
+		struct sockaddr_storage sock_addr;
+		int len = sizeof(sock_addr);
+		SOCKET c = accept(socket_listen_, (sockaddr*)&sock_addr, &len);
 		if (c == INVALID_SOCKET)
 		{
 			debug_log("accept %d\n", WSAGetLastError());
@@ -165,6 +176,7 @@ void shadow_tls_server::client_routine(int id)
 
 	routine_context* ctx = new routine_context();
 	ctx->type = kContextServer;
+	ctx->src_sock = client.s;
 	mbedtls_ssl_set_bio(&client.ssl_ctx, ctx, send_routine, recv_routine, nullptr);
 
 	while (!shutdown_)
@@ -208,15 +220,22 @@ void shadow_tls_server::client_routine(int id)
 		{
 			if (!client.handshaked)
 			{
-				int err = 0;
-				shadow_client cli(id);
-				ret = cli.connect(socket_address(shadow_doamin_.c_str()), err);
-				if (ret == -1)
+				int err;
+				shadow_client *cli = new shadow_client();
+				SOCKET remote = cli->connect(socket_address(shadow_doamin_.c_str()), err);
+				if(remote == INVALID_SOCKET)
 				{
-					debug_log("connect to shadow domain failed:%d\n", err);
+					delete cli;
 					break;
 				}
+				ctx->dst_sock = remote;
 
+				DWORD thread_id = 0;
+				HANDLE handle = CreateThread(nullptr, 0, thread_client, cli, 0, &thread_id);
+				if(handle == nullptr)
+				{
+					break;
+				}
 
 				char szTem[MAX_PATH] = {0};
 				ret = mbedtls_ssl_handshake(&client.ssl_ctx);
