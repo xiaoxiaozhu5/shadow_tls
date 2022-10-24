@@ -46,7 +46,8 @@ shadow_tls_server::~shadow_tls_server()
 	listen_thread_.join();
 	for (auto th = clients_.begin(); th != clients_.end(); ++th)
 	{
-		WaitForSingleObject((*th).second.thread, INFINITE);
+		if(th->second.thread.joinable())
+			th->second.thread.join();
 	}
 
 	{
@@ -149,45 +150,47 @@ void shadow_tls_server::listen_routine()
 		client_info client{};
 		client.id = g_client_id;
 		client.s = c;
+		DWORD dwThreadId = 0;
 		client.thread = std::thread([&]()
 		{
-			client_routine(client.id);
-		}).native_handle();
+				client_routine(g_client_id);
+		});
 
 		std::unique_lock<std::mutex> lock(client_mutex_);
-		clients_.insert({g_client_id, client});
+		clients_.insert({g_client_id, std::move(client)});
 	}
 }
 
 void shadow_tls_server::client_routine(int id)
 {
 	int ret = 0;
-	client_info client;
+	std::map<int, client_info>::iterator it;
 
 	{
 		std::unique_lock<std::mutex> lock(client_mutex_);
-		auto it = clients_.find(id);
+		it = clients_.find(id);
 		if (it == clients_.end())
 			return;
-		client = it->second;
 	}
 
-	mbedtls_ssl_setup(&client.ssl_ctx, &srv_ssl_conf_);
+	debug_log("client routine %d begin\n", GetCurrentThreadId());
+	mbedtls_ssl_init(&it->second.ssl_ctx);
+	mbedtls_ssl_setup(&it->second.ssl_ctx, &srv_ssl_conf_);
 
 	routine_context* ctx = new routine_context();
 	ctx->type = kContextServer;
-	ctx->src_sock = client.s;
-	mbedtls_ssl_set_bio(&client.ssl_ctx, ctx, send_routine, recv_routine, nullptr);
+	ctx->src_sock = it->second.s;
+	mbedtls_ssl_set_bio(&it->second.ssl_ctx, ctx, send_routine, recv_routine, nullptr);
 
 	while (!shutdown_)
 	{
 		SocketSelect sel(read_write_breaker_, true);
 		sel.PreSelect();
-		sel.Read_FD_SET(client.s);
-		sel.Exception_FD_SET(client.s);
-		if (!client.data.empty())
+		sel.Read_FD_SET(it->second.s);
+		sel.Exception_FD_SET(it->second.s);
+		if (!it->second.data.empty())
 		{
-			sel.Write_FD_SET(client.s);
+			sel.Write_FD_SET(it->second.s);
 		}
 
 		int retsel = sel.Select(3 * 1000);
@@ -201,24 +204,24 @@ void shadow_tls_server::client_routine(int id)
 			continue;
 		}
 
-		if (sel.Exception_FD_ISSET(client.s))
+		if (sel.Exception_FD_ISSET(it->second.s))
 		{
 			continue;
 		}
 
-		if (sel.Write_FD_ISSET(client.s))
+		if (sel.Write_FD_ISSET(it->second.s))
 		{
-			int sent = ::send(client.s, (const char*)client.data.data(), client.data.size(), 0);
+			int sent = ::send(it->second.s, (const char*)it->second.data.data(), it->second.data.size(), 0);
 			if (sent <= 0)
 			{
 				break;
 			}
-			client.data.clear();
+			it->second.data.clear();
 		}
 
-		if (sel.Read_FD_ISSET(client.s))
+		if (sel.Read_FD_ISSET(it->second.s))
 		{
-			if (!client.handshaked)
+			if (!it->second.handshaked)
 			{
 				int err;
 				shadow_client *cli = new shadow_client();
@@ -238,7 +241,7 @@ void shadow_tls_server::client_routine(int id)
 				}
 
 				char szTem[MAX_PATH] = {0};
-				ret = mbedtls_ssl_handshake(&client.ssl_ctx);
+				ret = mbedtls_ssl_handshake(&it->second.ssl_ctx);
 				if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE)
 				{
 					ret = 0;
@@ -247,12 +250,13 @@ void shadow_tls_server::client_routine(int id)
 				if (0 != ret)
 				{
 					mbedtls_strerror(ret, szTem, sizeof(szTem));
-					debug_log(" handshake error=%#X, %s", 0 - ret, szTem);
+					debug_log(" handshake error=%#X, %s\n", 0 - ret, szTem);
 					break;
 				}
-				client.handshaked = true;
+				it->second.handshaked = true;
 			}
 			//TODO: read data
 		}
 	}
+	debug_log("client routine %d end\n", GetCurrentThreadId());
 }

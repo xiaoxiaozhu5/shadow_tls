@@ -33,10 +33,11 @@
 #define NS_INADDRSZ 4
 typedef unsigned int uint32;
 typedef int int32;
-typedef unsigned short uint16;  // NOLINT
-typedef short int16;  // NOLINT
+typedef unsigned short uint16; // NOLINT
+typedef short int16; // NOLINT
 
-inline bool IN6_IS_ADDR_NAT64(in6_addr* a6) {
+inline bool IN6_IS_ADDR_NAT64(in6_addr* a6)
+{
 	return a6->s6_words[0] == htons(0x0064) && a6->s6_words[1] == htons(0x0064);
 }
 
@@ -421,9 +422,33 @@ socket_address::socket_address(const char* _ip, uint16_t _port)
 	}
 	else
 	{
-		sockaddr sock_addr = {0};
-		sock_addr.sa_family = AF_UNSPEC;
-		__init((sockaddr*)&sock_addr);
+		struct addrinfo hints, * result, * rp;
+		memset(&hints, 0, sizeof(hints));
+		hints.ai_family = AF_UNSPEC; /* Allow IPv4 or IPv6 */
+		hints.ai_socktype = SOCK_STREAM; /* Datagram socket */
+		hints.ai_flags |= AI_CANONNAME; /* For wildcard IP address */
+
+		int ret = getaddrinfo(_ip, nullptr, &hints, &result);
+		if (0 == ret)
+		{
+			for (rp = result; rp != NULL; rp = rp->ai_next)
+			{
+				sockaddr_in sock_addr = { 0 };
+				sock_addr.sin_family = AF_INET;
+				sock_addr.sin_addr = ((struct sockaddr_in*)rp->ai_addr)->sin_addr;
+				sock_addr.sin_port = htons(_port);
+
+				__init((sockaddr*)&sock_addr);
+				break;
+			}
+			freeaddrinfo(result);
+		}
+		else
+		{
+			sockaddr sock_addr = { 0 };
+			sock_addr.sa_family = AF_UNSPEC;
+			__init((sockaddr*)&sock_addr);
+		}
 	}
 }
 
@@ -462,12 +487,65 @@ socket_address::socket_address(const char* ipport)
 {
 	std::vector<std::string> splitted;
 	char* pos = strtok((char*)ipport, ":");
-	while(pos != nullptr)
+	while (pos != nullptr)
 	{
 		splitted.push_back(pos);
 		pos = strtok(nullptr, ":");
 	}
-	socket_address(splitted[0].c_str(), atoi(splitted[1].c_str()));
+
+	const char* _ip = splitted[0].c_str();
+	uint16 _port = atoi(splitted[1].c_str());
+	in6_addr addr6 = IN6ADDR_ANY_INIT;
+	in_addr addr4 = {0};
+
+	if (socket_inet_pton(AF_INET, _ip, &addr4))
+	{
+		sockaddr_in sock_addr = {0};
+		sock_addr.sin_family = AF_INET;
+		sock_addr.sin_addr = addr4;
+		sock_addr.sin_port = htons(_port);
+
+		__init((sockaddr*)&sock_addr);
+	}
+	else if (socket_inet_pton(AF_INET6, _ip, &addr6))
+	{
+		sockaddr_in6 sock_addr = {0};
+		sock_addr.sin6_family = AF_INET6;
+		sock_addr.sin6_addr = addr6;
+		sock_addr.sin6_port = htons(_port);
+
+		__init((sockaddr*)&sock_addr);
+	}
+	else
+	{
+		struct addrinfo hints, * result, * rp;
+		memset(&hints, 0, sizeof(hints));
+		hints.ai_family = AF_UNSPEC; /* Allow IPv4 or IPv6 */
+		hints.ai_socktype = SOCK_STREAM; /* Datagram socket */
+		hints.ai_flags |= AI_CANONNAME; /* For wildcard IP address */
+
+		int ret = getaddrinfo(_ip, nullptr, &hints, &result);
+		if (0 == ret)
+		{
+			for (rp = result; rp != NULL; rp = rp->ai_next)
+			{
+				sockaddr_in sock_addr = { 0 };
+				sock_addr.sin_family = AF_INET;
+				sock_addr.sin_addr = ((struct sockaddr_in*)rp->ai_addr)->sin_addr;
+				sock_addr.sin_port = htons(_port);
+
+				__init((sockaddr*)&sock_addr);
+				break;
+			}
+			freeaddrinfo(result);
+		}
+		else
+		{
+			sockaddr sock_addr = { 0 };
+			sock_addr.sa_family = AF_UNSPEC;
+			__init((sockaddr*)&sock_addr);
+		}
+	}
 }
 
 void socket_address::__init(const sockaddr* _addr)
@@ -490,7 +568,7 @@ void socket_address::__init(const sockaddr* _addr)
 			strncpy(ip_, kWellKnownNat64Prefix, 9);
 			sockaddr_in addr = {0};
 			addr.sin_family = AF_INET;
-            addr.sin_addr.s_addr = _asv6()->sin6_addr.u.Byte[12];
+			addr.sin_addr.s_addr = _asv6()->sin6_addr.u.Byte[12];
 			socket_inet_ntop(_asv6()->sin6_family, &(_asv6()->sin6_addr), ip_ + 9, sizeof(ip_) - 9);
 		}
 		else

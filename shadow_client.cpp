@@ -2,6 +2,7 @@
 
 #include <ws2ipdef.h>
 #include <WS2tcpip.h>
+#include <mbedtls/error.h>
 
 #include "bio.h"
 
@@ -46,16 +47,16 @@ int socket_error(SOCKET sock)
 
 shadow_client::shadow_client()
 	: handshaked_(false)
-	, socket_(INVALID_SOCKET)
-	, relate_id(0)
+	  , socket_(INVALID_SOCKET)
+	  , relate_id(0)
 {
 	init();
 }
 
 shadow_client::shadow_client(int id)
 	: handshaked_(false)
-	, socket_(INVALID_SOCKET)
-	, relate_id(id)
+	  , socket_(INVALID_SOCKET)
+	  , relate_id(id)
 {
 	init();
 }
@@ -71,7 +72,7 @@ shadow_client::~shadow_client()
 }
 
 SOCKET shadow_client::connect(const socket_address& _address, int& _errcode,
-                           int32_t _timeout/*ms*/)
+                              int32_t _timeout/*ms*/)
 {
 	SOCKET sock = connect_impl(_address, _errcode, _timeout);
 	socket_ = sock;
@@ -93,8 +94,10 @@ int shadow_client::handshake()
 	{
 		if (res != MBEDTLS_ERR_SSL_WANT_READ && res != MBEDTLS_ERR_SSL_WANT_WRITE)
 		{
+			char szTem[MAX_PATH] = {0};
 			hs_failed = true;
-			debug_log("mbedtls_ssl_handshake returned -0x%x\n", -res);
+			mbedtls_strerror(res, szTem, sizeof(szTem));
+			debug_log("mbedtls_ssl_handshake returned -0x%x, %s\n", -res, szTem);
 			break;
 		}
 	}
@@ -313,9 +316,10 @@ SOCKET shadow_client::connect_impl(const socket_address& _address, int& _errcode
 	}
 
 #ifdef _WIN32
-	if (0 != socket_ipv6only(sock, 0)) { debug_log("set ipv6only failed. error %s", strerror(socket_errno)); }
+	if (0 != socket_ipv6only(sock, 0)) { debug_log("set ipv6only failed. error %s\n", strerror(socket_errno)); }
 #endif
 
+	/*
 	int ret = socket_set_nobio(sock);
 	if (ret != 0)
 	{
@@ -323,9 +327,10 @@ SOCKET shadow_client::connect_impl(const socket_address& _address, int& _errcode
 		::socket_close(sock);
 		return INVALID_SOCKET;
 	}
+	*/
 
 	//connect
-	ret = ::connect(sock, &_address.address(), _address.address_length());
+	int ret = ::connect(sock, &_address.address(), _address.address_length());
 	if (ret != 0 && !IS_NOBLOCK_CONNECT_ERRNO(socket_errno))
 	{
 		_errcode = socket_errno;
@@ -387,4 +392,3 @@ SOCKET shadow_client::connect_impl(const socket_address& _address, int& _errcode
 
 	return sock;
 }
-

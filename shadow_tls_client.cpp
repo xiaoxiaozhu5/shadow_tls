@@ -15,7 +15,7 @@ shadow_tls_client::shadow_tls_client()
 		exit(1);
 	}
 
-	mbedtls_net_context net_ctx_;
+	mbedtls_net_init(&net_ctx_);
 	mbedtls_ssl_init(&ssl_ctx_);
 	mbedtls_x509_crt_init(&ca_crt_);
 	mbedtls_ssl_config_init(&ssl_conf_);

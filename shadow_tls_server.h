@@ -29,7 +29,7 @@ private:
 	{
 		int id;
 		SOCKET s;
-		HANDLE thread;
+		std::thread thread;
 		bool handshaked;
 		std::vector<uint8_t> data;
 		mbedtls_ssl_context	ssl_ctx;
