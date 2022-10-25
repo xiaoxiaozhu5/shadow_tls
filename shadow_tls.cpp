@@ -43,12 +43,12 @@ int main(int argc, char* argv[])
 	else if(strcmp(argv[1], "server") == 0)
 	{
 		unsigned short port = 9981;
-		std::string shadow_address = "www.baidu.com";
+		std::string shadow_address = "www.baidu.com:443";
 		if(argc == 3)
 			port = atoi(argv[2]);
 		if(argc == 4)
 			shadow_address = argv[3];
-		shadow_tls_server srv;
+		shadow_tls_server srv(shadow_address);
 		srv.start_server(port);
 		std::this_thread::sleep_for(std::chrono::minutes(1));
 	}

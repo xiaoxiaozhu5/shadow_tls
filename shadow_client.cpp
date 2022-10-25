@@ -2,7 +2,6 @@
 
 #include <ws2ipdef.h>
 #include <WS2tcpip.h>
-#include <mbedtls/error.h>
 
 #include "bio.h"
 
@@ -46,29 +45,21 @@ int socket_error(SOCKET sock)
 }
 
 shadow_client::shadow_client()
-	: handshaked_(false)
-	  , socket_(INVALID_SOCKET)
-	  , relate_id(0)
+	: socket_(INVALID_SOCKET)
+	, remote_socket_(INVALID_SOCKET)
 {
 	init();
 }
 
-shadow_client::shadow_client(int id)
-	: handshaked_(false)
-	  , socket_(INVALID_SOCKET)
-	  , relate_id(id)
+shadow_client::shadow_client(SOCKET remote_sock)
+	: socket_(INVALID_SOCKET)
+	, remote_socket_(remote_sock)
 {
 	init();
 }
 
 shadow_client::~shadow_client()
 {
-	mbedtls_x509_crt_free(&ca_crt_);
-	mbedtls_ssl_free(&ssl_ctx_);
-	mbedtls_ssl_config_free(&ssl_conf_);
-
-	mbedtls_ctr_drbg_free(&ctr_drbg_);
-	mbedtls_entropy_free(&entropy_);
 }
 
 SOCKET shadow_client::connect(const socket_address& _address, int& _errcode,
@@ -82,29 +73,8 @@ SOCKET shadow_client::connect(const socket_address& _address, int& _errcode,
 int shadow_client::handshake()
 {
 	int res = 0;
-	bool hs_failed = false;
-	mbedtls_ssl_setup(&ssl_ctx_, &ssl_conf_);
-
-	routine_context* ctx = new routine_context();
-	ctx->type = KContextClient;
-	ctx->src_sock = socket_;
-	ctx->dst_sock = remote_socket_;
-	mbedtls_ssl_set_bio(&ssl_ctx_, ctx, send_routine, recv_routine, nullptr);
-	while ((res = mbedtls_ssl_handshake(&ssl_ctx_)) != 0)
-	{
-		if (res != MBEDTLS_ERR_SSL_WANT_READ && res != MBEDTLS_ERR_SSL_WANT_WRITE)
-		{
-			char szTem[MAX_PATH] = {0};
-			hs_failed = true;
-			mbedtls_strerror(res, szTem, sizeof(szTem));
-			debug_log("mbedtls_ssl_handshake returned -0x%x, %s\n", -res, szTem);
-			break;
-		}
-	}
-	if (hs_failed)
-	{
-		return -1;
-	}
+	stream_data(remote_socket_, socket_);
+	stream_data(socket_, remote_socket_);
 	return 0;
 }
 
@@ -277,31 +247,6 @@ void shadow_client::cancel()
 
 void shadow_client::init()
 {
-	mbedtls_ctr_drbg_init(&ctr_drbg_);
-	mbedtls_entropy_init(&entropy_);
-
-	int res = mbedtls_ctr_drbg_seed(&ctr_drbg_, mbedtls_entropy_func, &entropy_, NULL, 0);
-	if (0 != res)
-	{
-		debug_log("drbg init error = %d.\n", res);
-		exit(1);
-	}
-
-	mbedtls_ssl_init(&ssl_ctx_);
-	mbedtls_x509_crt_init(&ca_crt_);
-	mbedtls_ssl_config_init(&ssl_conf_);
-
-	res = mbedtls_ssl_config_defaults(&ssl_conf_, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM,
-	                                  MBEDTLS_SSL_PRESET_DEFAULT);
-	if (0 != res)
-	{
-		debug_log("clt conf set default error = %d.\n", res);
-		exit(1);
-	}
-
-	mbedtls_ssl_conf_authmode(&ssl_conf_, MBEDTLS_SSL_VERIFY_NONE);
-	mbedtls_ssl_conf_rng(&ssl_conf_, mbedtls_ctr_drbg_random, &ctr_drbg_);
-	mbedtls_ssl_conf_min_version(&ssl_conf_, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_3);
 }
 
 SOCKET shadow_client::connect_impl(const socket_address& _address, int& _errcode, int32_t _timeout)
@@ -391,4 +336,26 @@ SOCKET shadow_client::connect_impl(const socket_address& _address, int& _errcode
 	}
 
 	return sock;
+}
+
+int shadow_client::stream_data(SOCKET Source, SOCKET Dest)
+{
+	int ret = 0;
+	ssize_t len = 0;
+	char dataBuffer[4096] = {0};
+
+	do {
+		len = ::recv(Source, dataBuffer, sizeof(dataBuffer), 0);
+		if (len > 0) {
+			debug_log("<<< %zu bytes received\n", len);
+			len = ::send(Dest, dataBuffer, len, 0);
+			if (len >= 0)
+				debug_log(">>> %zu bytes sent\n", len);
+		}
+
+		if (len == -1)
+			ret = -1;
+	} while (len > 0);
+
+	return ret;
 }

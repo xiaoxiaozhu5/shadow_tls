@@ -18,11 +18,14 @@ int g_client_id = 0;
 DWORD WINAPI thread_client(LPVOID lpThreadParameter)
 {
 	auto cli = static_cast<shadow_client*>(lpThreadParameter);
-	int ret = cli->handshake();
-	if (ret == -1)
+	while(true)
 	{
-		debug_log("handshake to shadow domain failed\n");
-		return 0;
+		int ret = cli->handshake();
+		if (ret == -1)
+		{
+			debug_log("handshake to shadow domain failed\n");
+			return 0;
+		}
 	}
 }
 
@@ -224,7 +227,7 @@ void shadow_tls_server::client_routine(int id)
 			if (!it->second.handshaked)
 			{
 				int err;
-				shadow_client *cli = new shadow_client();
+				shadow_client *cli = new shadow_client(ctx->src_sock);
 				SOCKET remote = cli->connect(socket_address(shadow_doamin_.c_str()), err);
 				if(remote == INVALID_SOCKET)
 				{
@@ -239,24 +242,10 @@ void shadow_tls_server::client_routine(int id)
 				{
 					break;
 				}
-
-				char szTem[MAX_PATH] = {0};
-				ret = mbedtls_ssl_handshake(&it->second.ssl_ctx);
-				if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE)
-				{
-					ret = 0;
-					break;
-				}
-				if (0 != ret)
-				{
-					mbedtls_strerror(ret, szTem, sizeof(szTem));
-					debug_log(" handshake error=%#X, %s\n", 0 - ret, szTem);
-					break;
-				}
-				it->second.handshaked = true;
 			}
 			//TODO: read data
 		}
 	}
 	debug_log("client routine %d end\n", GetCurrentThreadId());
 }
+

@@ -486,12 +486,14 @@ socket_address::socket_address(const struct in6_addr& _in6_addr)
 socket_address::socket_address(const char* ipport)
 {
 	std::vector<std::string> splitted;
-	char* pos = strtok((char*)ipport, ":");
+	char *dupstr = strdup(ipport);
+	char* pos = strtok(dupstr, ":");
 	while (pos != nullptr)
 	{
 		splitted.push_back(pos);
 		pos = strtok(nullptr, ":");
 	}
+	free(dupstr);
 
 	const char* _ip = splitted[0].c_str();
 	uint16 _port = atoi(splitted[1].c_str());
