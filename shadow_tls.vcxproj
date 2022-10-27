@@ -140,6 +140,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="autobuffer.cpp" />
     <ClCompile Include="bio.cpp" />
     <ClCompile Include="debug_helper.cpp" />
     <ClCompile Include="shadow_client.cpp" />
@@ -153,6 +154,7 @@
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="autobuffer.h" />
     <ClInclude Include="bio.h" />
     <ClInclude Include="debug_helper.h" />
     <ClInclude Include="shadow_client.h" />

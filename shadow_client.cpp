@@ -4,13 +4,13 @@
 #include <WS2tcpip.h>
 
 #include "bio.h"
+#include "autobuffer.h"
 
 #include "debug_helper.h"
 
 #pragma warning(disable: 4996)
 
 typedef SSIZE_T ssize_t;
-
 
 #define socket_close closesocket
 #define socket_errno WSAGetLastError()
@@ -20,6 +20,50 @@ typedef SSIZE_T ssize_t;
 #define IS_NOBLOCK_READ_ERRNO(err)  ((err) == SOCKET_ERRNO(EWOULDBLOCK))
 #define IS_NOBLOCK_CONNECT_ERRNO(err) ((err) == SOCKET_ERRNO(EWOULDBLOCK))
 #define IS_NOBLOCK_SEND_ERRNO(err) IS_NOBLOCK_WRITE_ERRNO(err)
+
+enum RECORD_TYPE : unsigned char
+{
+	recordTypeChangeCipherSpec = 20,
+	recordTypeAlert = 21,
+	recordTypeHandshake = 22,
+	recordTypeApplicationData = 23,
+};
+
+enum RECORD_VERSION : unsigned short
+{
+	VersionTLS10 = 0x0301,
+	VersionTLS11 = 0x0302,
+	VersionTLS12 = 0x0303,
+	VersionTLS13 = 0x0304,
+
+	VersionSSL30 = 0x0300
+};
+
+enum HANDSHAKE_TYPE: unsigned char
+{
+	handshakeTypeClientHello = 1,
+	handshakeTypeServerHello = 2,
+	handshakeTypeCertificate = 11,
+	handshakeTypeServerKeyExchange = 12,
+	handshakeTypeServerHelloDone = 14,
+	handshakeTypeClientKeyExchange = 16,
+	handshakeTypeCertificateStatus = 22,
+};
+
+#pragma pack(push, 1)
+struct record_layer
+{
+	RECORD_TYPE content_type;
+	RECORD_VERSION version;
+	unsigned short len;
+};
+
+struct handshake_protocol
+{
+	HANDSHAKE_TYPE type;
+	uint8_t len[3];
+};
+#pragma pack(pop)
 
 
 int socket_ipv6only(SOCKET _sock, int _only)
@@ -46,14 +90,14 @@ int socket_error(SOCKET sock)
 
 shadow_client::shadow_client()
 	: socket_(INVALID_SOCKET)
-	, remote_socket_(INVALID_SOCKET)
+	  , remote_socket_(INVALID_SOCKET)
 {
 	init();
 }
 
 shadow_client::shadow_client(SOCKET remote_sock)
 	: socket_(INVALID_SOCKET)
-	, remote_socket_(remote_sock)
+	  , remote_socket_(remote_sock)
 {
 	init();
 }
@@ -73,9 +117,62 @@ SOCKET shadow_client::connect(const socket_address& _address, int& _errcode,
 int shadow_client::handshake()
 {
 	int res = 0;
-	stream_data(remote_socket_, socket_);
-	stream_data(socket_, remote_socket_);
-	return 0;
+	bool change_cipher_spec_done = false;
+
+	SOCKET source = remote_socket_;
+	SOCKET dest = socket_;
+	do
+	{
+		AutoBuffer header, body;
+		res = read_fix_size(source, header, 5);
+		if (res <= 0)
+		{
+			debug_log("read tls header failed\n");
+			break;
+		}
+
+		auto layer = reinterpret_cast<record_layer*>(header.Ptr());
+		debug_log("content type:%d ver:0x%x len:%d\n", layer->content_type, layer->version, htons(layer->len));
+		res = ::send(dest, (char*)header.Ptr(), header.Length(), 0);
+		if (res <= 0)
+		{
+			debug_log("send tls header failed\n");
+			break;
+		}
+
+		res = read_fix_size(source, body, htons(layer->len));
+		if (res <= 0)
+		{
+			debug_log("read tls body failed\n");
+			break;
+		}
+
+		res = ::send(dest, (char*)body.Ptr(), body.Length(), 0);
+		if (res <= 0)
+		{
+			debug_log("send tls body failed\n");
+			break;
+		}
+
+		if (layer->content_type != recordTypeHandshake)
+		{
+			if (layer->content_type != recordTypeChangeCipherSpec)
+			{
+				debug_log("unexpected tls frame type:%d\n", layer->content_type);
+				break;
+			}
+			if (!change_cipher_spec_done)
+			{
+				change_cipher_spec_done = true;
+				continue;
+			}
+		}
+		if (change_cipher_spec_done)
+			break;
+		source = socket_;
+		dest = remote_socket_;
+	}while (true);
+	return res;
 }
 
 int shadow_client::send(const void* _buffer, size_t _len, int& _errcode,
@@ -144,31 +241,28 @@ int shadow_client::send(const void* _buffer, size_t _len, int& _errcode,
 	}
 }
 
-int shadow_client::recv(std::string& _buffer, size_t _max_size, int& _errcode,
+int shadow_client::recv(SOCKET s, AutoBuffer& _buffer, size_t _max_size, int& _errcode,
                         int _timeout, bool _wait_full_size)
 {
 	uint64_t start = GetTickCount64();
 	int32_t cost_time = 0;
 	size_t recv_len = 0;
 
-	if (_buffer.capacity() - _buffer.size() < _max_size)
+	if (_buffer.Capacity() - _buffer.Length() < _max_size)
 	{
-		_buffer.reserve(_buffer.capacity() + _max_size - (_buffer.capacity() - _buffer.size()));
+		_buffer.AddCapacity(_max_size - (_buffer.Capacity() - _buffer.Length()));
 	}
 
-	char* pos = (char*)_buffer.data();
 
 	SocketSelect sel(breaker_);
 	while (true)
 	{
-		ssize_t nrecv = ::recv(socket_, pos, _max_size - recv_len, 0);
+		ssize_t nrecv = ::recv(s, (char*)_buffer.Ptr(_buffer.Length() + recv_len), _max_size - recv_len, 0);
 
 		if (0 == nrecv)
 		{
 			_errcode = 0;
-			_buffer.resize(_buffer.size() + recv_len);
-			pos += recv_len;
-
+			_buffer.Length(_buffer.Pos(), _buffer.Length() + recv_len);
 			return (int)recv_len;
 		}
 
@@ -182,23 +276,21 @@ int shadow_client::recv(std::string& _buffer, size_t _max_size, int& _errcode,
 
 		if (recv_len >= _max_size)
 		{
+			_buffer.Length(_buffer.Pos(), _buffer.Length() + recv_len);
 			_errcode = 0;
-			_buffer.resize(_buffer.size() + recv_len);
-			pos += recv_len;
 			return (int)recv_len;
 		}
 
 		if (recv_len > 0 && !_wait_full_size)
 		{
+			_buffer.Length(_buffer.Pos(), _buffer.Length() + recv_len);
 			_errcode = 0;
-			_buffer.resize(_buffer.size() + recv_len);
-			pos += recv_len;
 			return (int)recv_len;
 		}
 
 		sel.PreSelect();
-		sel.Read_FD_SET(socket_);
-		sel.Exception_FD_SET(socket_);
+		sel.Read_FD_SET(s);
+		sel.Exception_FD_SET(s);
 		int ret = (0 <= _timeout)
 			          ? (sel.Select((_timeout > cost_time) ? (_timeout - cost_time) : 0))
 			          : (sel.Select());
@@ -213,28 +305,26 @@ int shadow_client::recv(std::string& _buffer, size_t _max_size, int& _errcode,
 		if (ret == 0)
 		{
 			_errcode = SOCKET_ERRNO(ETIMEDOUT);
-			_buffer.resize(_buffer.size() + recv_len);
-			pos += recv_len;
+			_buffer.Length(_buffer.Pos(), _buffer.Length() + recv_len);
 			return (int)recv_len;
 		}
 
 		if (sel.IsException() || sel.IsBreak())
 		{
 			_errcode = sel.Errno();
-			_buffer.resize(_buffer.size() + recv_len);
-			pos += recv_len;
+			_buffer.Length(_buffer.Pos(), _buffer.Length() + recv_len);
 			return (int)recv_len;
 		}
 
-		if (sel.Exception_FD_ISSET(socket_))
+		if (sel.Exception_FD_ISSET(s))
 		{
-			_errcode = socket_error(socket_);
+			_errcode = socket_error(s);
 			return -1;
 		}
 
-		if (!sel.Read_FD_ISSET(socket_))
+		if (!sel.Read_FD_ISSET(s))
 		{
-			_errcode = socket_error(socket_);
+			_errcode = socket_error(s);
 			return -1;
 		}
 	}
@@ -247,6 +337,13 @@ void shadow_client::cancel()
 
 void shadow_client::init()
 {
+}
+
+int shadow_client::read_fix_size(SOCKET s, AutoBuffer& buffer, size_t size)
+{
+	int ret, errcode;
+	ret = recv(s, buffer, size, errcode, 3000, true);
+	return ret;
 }
 
 SOCKET shadow_client::connect_impl(const socket_address& _address, int& _errcode, int32_t _timeout)
@@ -344,9 +441,11 @@ int shadow_client::stream_data(SOCKET Source, SOCKET Dest)
 	ssize_t len = 0;
 	char dataBuffer[4096] = {0};
 
-	do {
+	do
+	{
 		len = ::recv(Source, dataBuffer, sizeof(dataBuffer), 0);
-		if (len > 0) {
+		if (len > 0)
+		{
 			debug_log("<<< %zu bytes received\n", len);
 			len = ::send(Dest, dataBuffer, len, 0);
 			if (len >= 0)
@@ -355,7 +454,8 @@ int shadow_client::stream_data(SOCKET Source, SOCKET Dest)
 
 		if (len == -1)
 			ret = -1;
-	} while (len > 0);
+	}
+	while (len > 0);
 
 	return ret;
 }

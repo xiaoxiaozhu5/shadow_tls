@@ -3,8 +3,6 @@
 #include <cstdlib>
 #include <functional>
 #include <atomic>
-#include <mbedtls/error.h>
-#include <mbedtls/net_sockets.h>
 
 #include "bio.h"
 #include "shadow_client.h"
@@ -24,9 +22,11 @@ DWORD WINAPI thread_client(LPVOID lpThreadParameter)
 		if (ret == -1)
 		{
 			debug_log("handshake to shadow domain failed\n");
-			return 0;
+			return 1;
 		}
+		break;
 	}
+	return 0;
 }
 
 shadow_tls_server::shadow_tls_server()
@@ -57,14 +57,6 @@ shadow_tls_server::~shadow_tls_server()
 		std::unique_lock<std::mutex> lock(client_mutex_);
 		clients_.clear();
 	}
-
-	mbedtls_x509_crt_free(&ca_crt_);
-	mbedtls_pk_free(&srv_pk_ctx_);
-	mbedtls_x509_crt_free(&srv_crt_);
-	mbedtls_ssl_config_free(&srv_ssl_conf_);
-
-	mbedtls_ctr_drbg_free(&ctr_drbg_);
-	mbedtls_entropy_free(&entropy_);
 }
 
 int shadow_tls_server::start_server(uint16_t port)
@@ -108,31 +100,6 @@ void shadow_tls_server::shutdown()
 
 void shadow_tls_server::init()
 {
-	mbedtls_ctr_drbg_init(&ctr_drbg_);
-	mbedtls_entropy_init(&entropy_);
-
-	int res = mbedtls_ctr_drbg_seed(&ctr_drbg_, mbedtls_entropy_func, &entropy_, NULL, 0);
-	if (0 != res)
-	{
-		debug_log("drbg init error = %X.\n", res);
-		exit(1);
-	}
-	mbedtls_ssl_config_init(&srv_ssl_conf_);
-	mbedtls_x509_crt_init(&ca_crt_);
-	mbedtls_x509_crt_init(&srv_crt_);
-	mbedtls_pk_init(&srv_pk_ctx_);
-
-	res = mbedtls_ssl_config_defaults(&srv_ssl_conf_, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_TRANSPORT_STREAM,
-	                                  MBEDTLS_SSL_PRESET_DEFAULT);
-	if (0 != res)
-	{
-		debug_log("default conf error = %X.\n", res);
-		exit(1);
-	}
-
-	mbedtls_ssl_conf_authmode(&srv_ssl_conf_, MBEDTLS_SSL_VERIFY_NONE);
-	mbedtls_ssl_conf_rng(&srv_ssl_conf_, mbedtls_ctr_drbg_random, &ctr_drbg_);
-	mbedtls_ssl_conf_min_version(&srv_ssl_conf_, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_2);
 }
 
 void shadow_tls_server::listen_routine()
@@ -177,13 +144,10 @@ void shadow_tls_server::client_routine(int id)
 	}
 
 	debug_log("client routine %d begin\n", GetCurrentThreadId());
-	mbedtls_ssl_init(&it->second.ssl_ctx);
-	mbedtls_ssl_setup(&it->second.ssl_ctx, &srv_ssl_conf_);
 
 	routine_context* ctx = new routine_context();
 	ctx->type = kContextServer;
 	ctx->src_sock = it->second.s;
-	mbedtls_ssl_set_bio(&it->second.ssl_ctx, ctx, send_routine, recv_routine, nullptr);
 
 	while (!shutdown_)
 	{
@@ -214,6 +178,10 @@ void shadow_tls_server::client_routine(int id)
 
 		if (sel.Write_FD_ISSET(it->second.s))
 		{
+			if(!it->second.handshaked)
+			{
+				
+			}
 			int sent = ::send(it->second.s, (const char*)it->second.data.data(), it->second.data.size(), 0);
 			if (sent <= 0)
 			{
@@ -232,18 +200,30 @@ void shadow_tls_server::client_routine(int id)
 				if(remote == INVALID_SOCKET)
 				{
 					delete cli;
+					debug_log("connect tls remote failed\n");
 					break;
 				}
 				ctx->dst_sock = remote;
 
-				DWORD thread_id = 0;
-				HANDLE handle = CreateThread(nullptr, 0, thread_client, cli, 0, &thread_id);
-				if(handle == nullptr)
+				if(cli->handshake() < 0)
 				{
+					delete cli;
+					debug_log("handshake failed\n");
 					break;
 				}
+				//DWORD thread_id = 0;
+				//HANDLE handle = CreateThread(nullptr, 0, thread_client, cli, 0, &thread_id);
+				//if(handle == nullptr)
+				//{
+				//	break;
+				//}
+				//WaitForSingleObject(handle, INFINITE);
+				it->second.handshaked = true;
 			}
-			//TODO: read data
+			else
+			{
+
+			}
 		}
 	}
 	debug_log("client routine %d end\n", GetCurrentThreadId());

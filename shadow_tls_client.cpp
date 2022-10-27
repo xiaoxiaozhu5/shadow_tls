@@ -80,6 +80,7 @@ int shadow_tls_client::connect(const std::string& server, const std::string& sha
 		}
 		bool hs_failed = false;
 		mbedtls_ssl_set_bio(&ssl_ctx_, &net_ctx_, mbedtls_net_send, mbedtls_net_recv, NULL);
+		debug_log("start handshake\n");
 		while ((res = mbedtls_ssl_handshake(&ssl_ctx_)) != 0)
 		{
 			if (res != MBEDTLS_ERR_SSL_WANT_READ && res != MBEDTLS_ERR_SSL_WANT_WRITE)

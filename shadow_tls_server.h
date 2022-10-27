@@ -2,10 +2,6 @@
 #include <mutex>
 #include <winsock2.h>
 
-#include <mbedtls/ctr_drbg.h>
-#include <mbedtls/entropy.h>
-#include <mbedtls/ssl.h>
-
 #include <thread>
 #include <vector>
 
@@ -32,7 +28,6 @@ private:
 		std::thread thread;
 		bool handshaked;
 		std::vector<uint8_t> data;
-		mbedtls_ssl_context	ssl_ctx;
 
 		client_info()
 		{
@@ -50,14 +45,6 @@ private:
 private:
 	std::string shadow_doamin_;
 	SOCKET socket_listen_;
-
-	mbedtls_ctr_drbg_context ctr_drbg_;
-	mbedtls_entropy_context entropy_;
-
-	mbedtls_ssl_config srv_ssl_conf_;
-	mbedtls_x509_crt ca_crt_;
-	mbedtls_x509_crt srv_crt_;
-	mbedtls_pk_context srv_pk_ctx_;
 
 	SocketBreaker read_write_breaker_;
 	bool shutdown_;
