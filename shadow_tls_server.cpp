@@ -29,16 +29,18 @@ DWORD WINAPI thread_client(LPVOID lpThreadParameter)
 	return 0;
 }
 
-shadow_tls_server::shadow_tls_server()
+shadow_tls_server::shadow_tls_server(MShadowServer& observer)
 	: shadow_doamin_(DEFAULT_SHADOW_DOAMIN)
-	  , shutdown_(false)
+    , shutdown_(false)
+	, observer_(observer)
 {
 	init();
 }
 
-shadow_tls_server::shadow_tls_server(const std::string& shadow_domain)
+shadow_tls_server::shadow_tls_server(MShadowServer& observer, const std::string& shadow_domain)
 	: shadow_doamin_(shadow_domain)
-	  , shutdown_(false)
+    , shutdown_(false)
+	, observer_(observer)
 {
 	init();
 }
@@ -126,6 +128,9 @@ void shadow_tls_server::listen_routine()
 				client_routine(g_client_id);
 		});
 
+		char cli_ip[16] = {0};
+		socket_inet_ntop(AF_INET, &(((struct sockaddr_in*)&sock_addr)->sin_addr), cli_ip, sizeof(cli_ip));
+		observer_.OnAccept(this, c, *(struct sockaddr_in*)&((struct sockaddr_in*)&sock_addr)->sin_addr);
 		std::unique_lock<std::mutex> lock(client_mutex_);
 		clients_.insert({g_client_id, std::move(client)});
 	}
@@ -218,6 +223,8 @@ void shadow_tls_server::client_routine(int id)
 				//	break;
 				//}
 				//WaitForSingleObject(handle, INFINITE);
+				debug_log("handshake finished\n");
+				delete cli;
 				it->second.handshaked = true;
 			}
 			else
@@ -226,6 +233,7 @@ void shadow_tls_server::client_routine(int id)
 			}
 		}
 	}
+	observer_.OnError(this, WSAGetLastError());
 	debug_log("client routine %d end\n", GetCurrentThreadId());
 }
 

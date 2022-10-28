@@ -90,20 +90,27 @@ int socket_error(SOCKET sock)
 
 shadow_client::shadow_client()
 	: socket_(INVALID_SOCKET)
-	  , remote_socket_(INVALID_SOCKET)
+    , remote_socket_(INVALID_SOCKET)
 {
 	init();
 }
 
 shadow_client::shadow_client(SOCKET remote_sock)
 	: socket_(INVALID_SOCKET)
-	  , remote_socket_(remote_sock)
+    , remote_socket_(remote_sock)
 {
 	init();
 }
 
 shadow_client::~shadow_client()
 {
+	breaker_.Break();
+	if(socket_ != INVALID_SOCKET)
+	{
+		shutdown(socket_, SD_BOTH);
+		socket_close(socket_);
+		socket_ = INVALID_SOCKET;
+	}
 }
 
 SOCKET shadow_client::connect(const socket_address& _address, int& _errcode,

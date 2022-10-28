@@ -8,6 +8,43 @@
 
 #include <thread>
 
+#include "socket_address.h"
+
+class ClientEvent : public MShadowEvent
+{
+public:
+	void OnConnect() override
+	{
+		printf("connected\n");
+	}
+	void OnDisConnect(bool isremote) override
+	{
+		printf("disconnected %s\n", isremote ? "because remote closed" : "locally");
+	}
+	void OnError(int errcode) override
+	{
+		printf("error:%d\n", errcode);
+	}
+};
+
+class ServerEvent : public MShadowServer
+{
+public:
+	void OnAccept(shadow_tls_server* server, SOCKET sock, const sockaddr_in& addr) override
+	{
+		char tmp[100] = {0};
+		socket_inet_ntop(AF_INET, &addr, tmp, sizeof(tmp));
+		printf("connect from %s\n", tmp);
+	}
+	void OnError(shadow_tls_server* server, int err) override
+	{
+		printf("error:%d\n", err);
+	}
+};
+
+ClientEvent g_client_event;
+ServerEvent g_server_event;
+
 void usage(char* pragma)
 {
 	printf("%s client|server [option]\n", pragma);
@@ -36,7 +73,7 @@ int main(int argc, char* argv[])
 		{
 			shadow_address = argv[3];
 		}
-		shadow_tls_client cli;
+		shadow_tls_client cli(g_client_event);
 		cli.connect(argv[2], shadow_address);
 		std::this_thread::sleep_for(std::chrono::minutes(1));
 	}
@@ -48,7 +85,7 @@ int main(int argc, char* argv[])
 			port = atoi(argv[2]);
 		if(argc == 4)
 			shadow_address = argv[3];
-		shadow_tls_server srv(shadow_address);
+		shadow_tls_server srv(g_server_event, shadow_address);
 		srv.start_server(port);
 		std::this_thread::sleep_for(std::chrono::minutes(1));
 	}

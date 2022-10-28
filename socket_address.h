@@ -27,6 +27,8 @@
 #include <ws2ipdef.h>
 #include <WS2tcpip.h>
 
+const char* socket_inet_ntop(int af, const void* src, char* dst, unsigned int size);
+int socket_inet_pton(int af, const char* src, void* dst);
 
 class socket_address {
 

@@ -1,10 +1,16 @@
 #include "shadow_tls_client.h"
 
+#include <functional>
+
+#include "autobuffer.h"
+
 #include "debug_helper.h"
 
 
-shadow_tls_client::shadow_tls_client()
+shadow_tls_client::shadow_tls_client(MShadowEvent& event)
+	: event_(event)
 {
+	will_disconnect_ = false;
 	mbedtls_ctr_drbg_init(&ctr_drbg_);
 	mbedtls_entropy_init(&entropy_);
 
@@ -74,7 +80,7 @@ int shadow_tls_client::connect(const std::string& server, const std::string& sha
 		}
 
 		res = mbedtls_ssl_set_hostname(&ssl_ctx_, shadow_domain.c_str());
-		if(0 != res)
+		if (0 != res)
 		{
 			break;
 		}
@@ -90,15 +96,49 @@ int shadow_tls_client::connect(const std::string& server, const std::string& sha
 				break;
 			}
 		}
-		if(hs_failed)
+		if (hs_failed)
 		{
 			break;
 		}
 
-		//TODO: start io thread
+		res = 0;
+		event_.OnConnect();
+		thread_ = std::thread(std::bind(&shadow_tls_client::io_thread, this));
 	}
 	while (false);
+	if (res != 0)
+	{
+		event_.OnError(res);
+	}
 	return res;
+}
+
+void shadow_tls_client::disconenct()
+{
+	if (will_disconnect_)
+		return;
+	will_disconnect_ = true;
+}
+
+void shadow_tls_client::write(const void* buf, unsigned int len)
+{
+	AutoBuffer* tmpbuff = new AutoBuffer;
+	tmpbuff->Write(0, buf, len);
+
+	std::unique_lock<std::mutex> lock(write_mutex_);
+	lst_buffer_.push_back(tmpbuff);
+}
+
+SSIZE_T shadow_tls_client::read(void* buf, unsigned int len)
+{
+	std::unique_lock<std::mutex> lock(read_disconnect_mutex_);
+	if(lst_rv_buffer_.empty())
+		return 0;
+	AutoBuffer& tmp = *lst_rv_buffer_.front();
+	auto read_bytes = tmp.Read(buf, len);
+	delete lst_rv_buffer_.front();
+	lst_rv_buffer_.pop_front();
+	return read_bytes;
 }
 
 bool shadow_tls_client::validate_address(const std::string& server)
@@ -117,3 +157,224 @@ bool shadow_tls_client::split_address_to_ip_and_port(const std::string& server, 
 	port = server.substr(pos + 1);
 	return true;
 }
+
+void shadow_tls_client::io_thread()
+{
+	int ret = 0;
+	uint32_t flag = MBEDTLS_NET_POLL_READ;
+	bool write_again = false, read_again = false;
+	while (true)
+	{
+		{
+			std::unique_lock<std::mutex> lock(write_mutex_);
+			if (!lst_buffer_.empty()) 
+				flag = MBEDTLS_NET_POLL_WRITE;
+			else
+				flag = MBEDTLS_NET_POLL_READ;
+		}
+		ret = mbedtls_net_poll(&net_ctx_, flag, 300);
+		if (0 == ret)
+		{
+			if(will_disconnect_)
+				break;
+
+			event_.OnDisConnect(false);
+			continue;
+		}
+		if (0 > ret)
+		{
+			debug_log("mbedtls poll error:%#X\n", -ret);
+			break;
+		}
+		if (ret != flag)
+		{
+			debug_log("mbedtls poll error:%#X\n", -ret);
+			break;
+		}
+
+		if(write_again)
+		{
+			std::unique_lock<std::mutex> lock(write_mutex_);
+			AutoBuffer& buf = *lst_buffer_.front();
+			size_t len = buf.Length();
+
+			if (buf.Pos() < (off_t)len)
+			{
+				int send_len = mbedtls_ssl_write(&ssl_ctx_, (const unsigned char*)buf.PosPtr(),
+					(size_t)(len - buf.Pos()));
+				if (0 == send_len)
+				{
+					return;
+				}
+				if (0 > send_len)
+				{
+					if (ret != MBEDTLS_ERR_SSL_WANT_WRITE &&
+						ret != MBEDTLS_ERR_SSL_WANT_READ &&
+						ret != MBEDTLS_ERR_SSL_ASYNC_IN_PROGRESS &&
+						ret != MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS)
+					{
+						return;
+					}
+					else if (MBEDTLS_ERR_SSL_WANT_WRITE == send_len)
+					{
+						flag = MBEDTLS_NET_POLL_WRITE;
+						write_again = true;
+						continue;
+					}
+					else if (MBEDTLS_ERR_SSL_WANT_READ == send_len)
+					{
+						flag = MBEDTLS_NET_POLL_READ;
+						write_again = true;
+						continue;
+					}
+					else
+					{
+						flag = MBEDTLS_NET_POLL_WRITE;
+						write_again = true;
+						continue;
+					}
+				}
+				if (0 < send_len)
+				{
+					buf.Seek(send_len, AutoBuffer::ESeekCur);
+					write_again = false;
+				}
+			}
+			else
+			{
+				delete lst_buffer_.front();
+				lst_buffer_.pop_front();
+			}
+			write_again = false;
+			continue;
+		}
+
+		if(read_again)
+		{
+			AutoBuffer* tmp = new AutoBuffer();
+			tmp->AllocWrite(4096);
+			ret = mbedtls_ssl_read(&ssl_ctx_, (unsigned char*)tmp->Ptr(), tmp->Length());
+			if (0 == ret)
+			{
+				delete tmp;
+				return;
+			}
+			if (0 > ret)
+			{
+				if (MBEDTLS_ERR_SSL_WANT_READ == ret)
+				{
+					flag = MBEDTLS_NET_POLL_READ;
+					read_again = true;
+					continue;
+				}
+				if (MBEDTLS_ERR_SSL_WANT_WRITE == ret)
+				{
+					flag = MBEDTLS_NET_POLL_WRITE;
+					read_again = true;
+				}
+				return;
+			}
+			if (0 < ret)
+			{
+				std::unique_lock<std::mutex> lock(read_disconnect_mutex_);
+				lst_rv_buffer_.push_back(tmp);
+			}
+			read_again = false;
+			continue;
+		}
+
+		switch (flag)
+		{
+		case MBEDTLS_NET_POLL_READ:
+			{
+				AutoBuffer* tmp = new AutoBuffer();
+				tmp->AllocWrite(4096);
+				ret = mbedtls_ssl_read(&ssl_ctx_, (unsigned char*)tmp->Ptr(), tmp->Length());
+				if(0 == ret)
+				{
+					delete tmp;
+					event_.OnDisConnect(true);
+					return;
+				}
+				if(0 > ret)
+				{
+					if(MBEDTLS_ERR_SSL_WANT_READ == ret)
+					{
+						flag = MBEDTLS_NET_POLL_READ;
+						read_again = true;
+						continue;
+					}
+					if(MBEDTLS_ERR_SSL_WANT_WRITE == ret)
+					{
+						flag = MBEDTLS_NET_POLL_WRITE;
+						read_again = true;
+					}
+					return;
+				}
+				if(0 < ret)
+				{
+					std::unique_lock<std::mutex> lock(read_disconnect_mutex_);
+					lst_rv_buffer_.push_back(tmp);
+				}
+			}
+			break;
+		case MBEDTLS_NET_POLL_WRITE:
+			{
+				std::unique_lock<std::mutex> lock(write_mutex_);
+				AutoBuffer& buf = *lst_buffer_.front();
+				size_t len = buf.Length();
+
+				if (buf.Pos() < (off_t)len)
+				{
+					int send_len = mbedtls_ssl_write(&ssl_ctx_, (const unsigned char*)buf.PosPtr(),
+					                                 (size_t)(len - buf.Pos()));
+					if (0 == send_len)
+					{
+						event_.OnDisConnect(true);
+						return;
+					}
+					if (0 > send_len)
+					{
+						if (ret != MBEDTLS_ERR_SSL_WANT_WRITE &&
+							ret != MBEDTLS_ERR_SSL_WANT_READ &&
+							ret != MBEDTLS_ERR_SSL_ASYNC_IN_PROGRESS &&
+							ret != MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS)
+						{
+							return;
+						}
+						else if (MBEDTLS_ERR_SSL_WANT_WRITE == send_len)
+						{
+							flag = MBEDTLS_NET_POLL_WRITE;
+							write_again = true;
+							continue;
+						}
+						else if (MBEDTLS_ERR_SSL_WANT_READ == send_len)
+						{
+							flag = MBEDTLS_NET_POLL_READ;
+							write_again = true;
+							continue;
+						}
+						else
+						{
+							flag = MBEDTLS_NET_POLL_WRITE;
+							write_again = true;
+							continue;
+						}
+					}
+					if( 0 < send_len)
+					{
+						buf.Seek(send_len, AutoBuffer::ESeekCur);
+						write_again = false;
+					}
+				}
+				else
+				{
+					delete lst_buffer_.front();
+					lst_buffer_.pop_front();
+				}
+			}
+			break;
+		}
+	}
+}
+

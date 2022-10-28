@@ -7,6 +7,7 @@
 
 class AutoBuffer;
 
+
 class shadow_client
 {
 public:
