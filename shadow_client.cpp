@@ -10,7 +10,7 @@
 
 #pragma warning(disable: 4996)
 
-typedef SSIZE_T ssize_t;
+using ssize_t = SSIZE_T;
 
 #define socket_close closesocket
 #define socket_errno WSAGetLastError()
@@ -90,14 +90,14 @@ int socket_error(SOCKET sock)
 
 shadow_client::shadow_client()
 	: socket_(INVALID_SOCKET)
-    , remote_socket_(INVALID_SOCKET)
+	  , remote_socket_(INVALID_SOCKET)
 {
 	init();
 }
 
 shadow_client::shadow_client(SOCKET remote_sock)
 	: socket_(INVALID_SOCKET)
-    , remote_socket_(remote_sock)
+	  , remote_socket_(remote_sock)
 {
 	init();
 }
@@ -105,7 +105,7 @@ shadow_client::shadow_client(SOCKET remote_sock)
 shadow_client::~shadow_client()
 {
 	breaker_.Break();
-	if(socket_ != INVALID_SOCKET)
+	if (socket_ != INVALID_SOCKET)
 	{
 		shutdown(socket_, SD_BOTH);
 		socket_close(socket_);
@@ -124,61 +124,78 @@ SOCKET shadow_client::connect(const socket_address& _address, int& _errcode,
 int shadow_client::handshake()
 {
 	int res = 0;
-	bool change_cipher_spec_done = false;
+	int change_cipher_spec_done = 0;
 
 	SOCKET source = remote_socket_;
 	SOCKET dest = socket_;
 	do
 	{
-		AutoBuffer header, body;
-		res = read_fix_size(source, header, 5);
-		if (res <= 0)
+		bool change = false;
+		do
 		{
-			debug_log("read tls header failed\n");
-			break;
-		}
-
-		auto layer = reinterpret_cast<record_layer*>(header.Ptr());
-		debug_log("content type:%d ver:0x%x len:%d\n", layer->content_type, layer->version, htons(layer->len));
-		res = ::send(dest, (char*)header.Ptr(), header.Length(), 0);
-		if (res <= 0)
-		{
-			debug_log("send tls header failed\n");
-			break;
-		}
-
-		res = read_fix_size(source, body, htons(layer->len));
-		if (res <= 0)
-		{
-			debug_log("read tls body failed\n");
-			break;
-		}
-
-		res = ::send(dest, (char*)body.Ptr(), body.Length(), 0);
-		if (res <= 0)
-		{
-			debug_log("send tls body failed\n");
-			break;
-		}
-
-		if (layer->content_type != recordTypeHandshake)
-		{
-			if (layer->content_type != recordTypeChangeCipherSpec)
+			AutoBuffer header, body;
+			res = read_fix_size(source, header, 5);
+			if (res <= 0)
 			{
-				debug_log("unexpected tls frame type:%d\n", layer->content_type);
+				debug_log("read tls header failed\n");
 				break;
 			}
-			if (!change_cipher_spec_done)
+
+			auto layer = reinterpret_cast<record_layer*>(header.Ptr());
+			debug_log("content type:%d ver:0x%x len:%d\n", layer->content_type, layer->version, htons(layer->len));
+			res = ::send(dest, static_cast<char*>(header.Ptr()), header.Length(), 0);
+			if (res <= 0)
 			{
-				change_cipher_spec_done = true;
-				continue;
+				debug_log("send tls header failed\n");
+				break;
 			}
+
+			res = read_fix_size(source, body, htons(layer->len));
+			if (res <= 0)
+			{
+				debug_log("read tls body failed\n");
+				break;
+			}
+
+			res = ::send(dest, static_cast<char*>(body.Ptr()), body.Length(), 0);
+			if (res <= 0)
+			{
+				debug_log("send tls body failed\n");
+				break;
+			}
+
+			if (layer->content_type != recordTypeHandshake)
+			{
+				if (layer->content_type != recordTypeChangeCipherSpec)
+				{
+					debug_log("unexpected tls frame type:%d\n", layer->content_type);
+
+					break;
+				}
+			}
+			if (layer->content_type == recordTypeHandshake && htons(layer->len) == 0x20)
+			{
+				change_cipher_spec_done++;
+			}
+
+			change = true;
 		}
-		if (change_cipher_spec_done)
+		while (false);
+		if (change_cipher_spec_done >= 2)
 			break;
-		source = socket_;
-		dest = remote_socket_;
-	}while (true);
+
+		if (change)
+		{
+			dest = remote_socket_;
+			source = socket_;
+		}
+		else
+		{
+			dest = socket_;
+			source = remote_socket_;
+		}
+	}
+	while (true);
 	return res;
 }
 
@@ -193,7 +210,7 @@ int shadow_client::send(const void* _buffer, size_t _len, int& _errcode,
 
 	while (true)
 	{
-		ssize_t nwrite = ::send(socket_, (const char*)_buffer + sent_len, _len - sent_len, 0);
+		ssize_t nwrite = ::send(socket_, static_cast<const char*>(_buffer) + sent_len, _len - sent_len, 0);
 		if (nwrite == 0 || (0 > nwrite && !IS_NOBLOCK_SEND_ERRNO(socket_errno)))
 		{
 			_errcode = socket_errno;
@@ -205,7 +222,7 @@ int shadow_client::send(const void* _buffer, size_t _len, int& _errcode,
 		if (sent_len >= _len)
 		{
 			_errcode = 0;
-			return (int)sent_len;
+			return static_cast<int>(sent_len);
 		}
 
 		sel.PreSelect();
@@ -214,7 +231,7 @@ int shadow_client::send(const void* _buffer, size_t _len, int& _errcode,
 		int ret = (0 <= _timeout)
 			          ? (sel.Select((_timeout > cost_time) ? (_timeout - cost_time) : 0))
 			          : (sel.Select());
-		cost_time = (int32_t)(GetTickCount64() - start);
+		cost_time = static_cast<int32_t>(GetTickCount64() - start);
 
 		if (ret < 0)
 		{
@@ -225,13 +242,13 @@ int shadow_client::send(const void* _buffer, size_t _len, int& _errcode,
 		if (ret == 0)
 		{
 			_errcode = SOCKET_ERRNO(ETIMEDOUT);
-			return (int)sent_len;
+			return static_cast<int>(sent_len);
 		}
 
 		if (sel.IsException() || sel.IsBreak())
 		{
 			_errcode = 0;
-			return (int)sent_len;
+			return static_cast<int>(sent_len);
 		}
 
 		if (sel.Exception_FD_ISSET(socket_))
@@ -264,13 +281,14 @@ int shadow_client::recv(SOCKET s, AutoBuffer& _buffer, size_t _max_size, int& _e
 	SocketSelect sel(breaker_);
 	while (true)
 	{
-		ssize_t nrecv = ::recv(s, (char*)_buffer.Ptr(_buffer.Length() + recv_len), _max_size - recv_len, 0);
+		ssize_t nrecv = ::recv(s, static_cast<char*>(_buffer.Ptr(_buffer.Length() + recv_len)), _max_size - recv_len,
+		                       0);
 
 		if (0 == nrecv)
 		{
 			_errcode = 0;
 			_buffer.Length(_buffer.Pos(), _buffer.Length() + recv_len);
-			return (int)recv_len;
+			return static_cast<int>(recv_len);
 		}
 
 		if (0 > nrecv && !IS_NOBLOCK_READ_ERRNO(socket_errno))
@@ -285,14 +303,14 @@ int shadow_client::recv(SOCKET s, AutoBuffer& _buffer, size_t _max_size, int& _e
 		{
 			_buffer.Length(_buffer.Pos(), _buffer.Length() + recv_len);
 			_errcode = 0;
-			return (int)recv_len;
+			return static_cast<int>(recv_len);
 		}
 
 		if (recv_len > 0 && !_wait_full_size)
 		{
 			_buffer.Length(_buffer.Pos(), _buffer.Length() + recv_len);
 			_errcode = 0;
-			return (int)recv_len;
+			return static_cast<int>(recv_len);
 		}
 
 		sel.PreSelect();
@@ -301,7 +319,7 @@ int shadow_client::recv(SOCKET s, AutoBuffer& _buffer, size_t _max_size, int& _e
 		int ret = (0 <= _timeout)
 			          ? (sel.Select((_timeout > cost_time) ? (_timeout - cost_time) : 0))
 			          : (sel.Select());
-		cost_time = (int32_t)(GetTickCount64() - start);
+		cost_time = static_cast<int32_t>(GetTickCount64() - start);
 
 		if (ret < 0)
 		{
@@ -313,14 +331,14 @@ int shadow_client::recv(SOCKET s, AutoBuffer& _buffer, size_t _max_size, int& _e
 		{
 			_errcode = SOCKET_ERRNO(ETIMEDOUT);
 			_buffer.Length(_buffer.Pos(), _buffer.Length() + recv_len);
-			return (int)recv_len;
+			return static_cast<int>(recv_len);
 		}
 
 		if (sel.IsException() || sel.IsBreak())
 		{
 			_errcode = sel.Errno();
 			_buffer.Length(_buffer.Pos(), _buffer.Length() + recv_len);
-			return (int)recv_len;
+			return static_cast<int>(recv_len);
 		}
 
 		if (sel.Exception_FD_ISSET(s))
@@ -399,7 +417,7 @@ SOCKET shadow_client::connect_impl(const socket_address& _address, int& _errcode
 		::socket_close(sock);
 		return INVALID_SOCKET;
 	}
-	else if (ret < 0)
+	if (ret < 0)
 	{
 		_errcode = sel.Errno();
 		::socket_close(sock);
