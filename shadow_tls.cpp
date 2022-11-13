@@ -17,10 +17,12 @@ public:
 	{
 		printf("connected\n");
 	}
+
 	void OnDisConnect(bool isremote) override
 	{
 		printf("disconnected %s\n", isremote ? "because remote closed" : "locally");
 	}
+
 	void OnError(int errcode) override
 	{
 		printf("error:%d\n", errcode);
@@ -36,6 +38,7 @@ public:
 		socket_inet_ntop(AF_INET, &addr, tmp, sizeof(tmp));
 		printf("connect from %s\n", tmp);
 	}
+
 	void OnError(shadow_tls_server* server, int err) override
 	{
 		printf("error:%d\n", err);
@@ -57,19 +60,19 @@ void usage(char* pragma)
 
 int main(int argc, char* argv[])
 {
-	if(argc < 2)
+	if (argc < 2)
 	{
 		usage(argv[0]);
 		return 1;
 	}
 
 	WSADATA wsa{};
-	WSAStartup(MAKEWORD(2,2), &wsa);
+	WSAStartup(MAKEWORD(2, 2), &wsa);
 
-	if(strcmp(argv[1], "client") == 0)
+	if (strcmp(argv[1], "client") == 0)
 	{
 		std::string shadow_address = "www.baidu.com";
-		if(argc == 4)
+		if (argc == 4)
 		{
 			shadow_address = argv[3];
 		}
@@ -77,14 +80,16 @@ int main(int argc, char* argv[])
 		cli.connect(argv[2], shadow_address);
 		std::this_thread::sleep_for(std::chrono::minutes(1));
 	}
-	else if(strcmp(argv[1], "server") == 0)
+	else if (strcmp(argv[1], "server") == 0)
 	{
 		unsigned short port = 9981;
 		std::string shadow_address = "www.baidu.com:443";
-		if(argc == 3)
+		if (argc >= 3)
 			port = atoi(argv[2]);
-		if(argc == 4)
+		if (argc >= 4)
 			shadow_address = argv[3];
+
+		debug_log("%d", port);
 		shadow_tls_server srv(g_server_event, shadow_address);
 		srv.start_server(port);
 		std::this_thread::sleep_for(std::chrono::minutes(1));

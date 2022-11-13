@@ -16,7 +16,7 @@ int g_client_id = 0;
 DWORD WINAPI thread_client(LPVOID lpThreadParameter)
 {
 	auto cli = static_cast<shadow_client*>(lpThreadParameter);
-	while(true)
+	while (true)
 	{
 		int ret = cli->handshake();
 		if (ret == -1)
@@ -31,16 +31,16 @@ DWORD WINAPI thread_client(LPVOID lpThreadParameter)
 
 shadow_tls_server::shadow_tls_server(MShadowServer& observer)
 	: shadow_doamin_(DEFAULT_SHADOW_DOAMIN)
-    , shutdown_(false)
-	, observer_(observer)
+	  , shutdown_(false)
+	  , observer_(observer)
 {
 	init();
 }
 
 shadow_tls_server::shadow_tls_server(MShadowServer& observer, const std::string& shadow_domain)
 	: shadow_doamin_(shadow_domain)
-    , shutdown_(false)
-	, observer_(observer)
+	  , shutdown_(false)
+	  , observer_(observer)
 {
 	init();
 }
@@ -51,7 +51,7 @@ shadow_tls_server::~shadow_tls_server()
 	listen_thread_.join();
 	for (auto th = clients_.begin(); th != clients_.end(); ++th)
 	{
-		if(th->second.thread.joinable())
+		if (th->second.thread.joinable())
 			th->second.thread.join();
 	}
 
@@ -75,9 +75,9 @@ int shadow_tls_server::start_server(uint16_t port)
 		}
 		SOCKADDR_IN si = {0};
 		si.sin_family = AF_INET;
-		si.sin_port = ntohs(static_cast<USHORT>(port));
+		si.sin_port = ntohs(port);
 		si.sin_addr.S_un.S_addr = ADDR_ANY;
-		res = ::bind(socket_listen_, (sockaddr*)&si, sizeof(si));
+		res = bind(socket_listen_, reinterpret_cast<sockaddr*>(&si), sizeof(si));
 		if (res == SOCKET_ERROR)
 		{
 			break;
@@ -88,7 +88,7 @@ int shadow_tls_server::start_server(uint16_t port)
 			break;
 		}
 
-		listen_thread_ = std::thread(std::bind(&shadow_tls_server::listen_routine, this));
+		listen_thread_ = std::thread([this] { listen_routine(); });
 	}
 	while (false);
 	return res;
@@ -111,7 +111,7 @@ void shadow_tls_server::listen_routine()
 	{
 		struct sockaddr_storage sock_addr;
 		int len = sizeof(sock_addr);
-		SOCKET c = accept(socket_listen_, (sockaddr*)&sock_addr, &len);
+		SOCKET c = accept(socket_listen_, reinterpret_cast<sockaddr*>(&sock_addr), &len);
 		if (c == INVALID_SOCKET)
 		{
 			debug_log("accept %d\n", WSAGetLastError());
@@ -125,12 +125,15 @@ void shadow_tls_server::listen_routine()
 		DWORD dwThreadId = 0;
 		client.thread = std::thread([&]()
 		{
-				client_routine(g_client_id);
+			client_routine(g_client_id);
 		});
 
 		char cli_ip[16] = {0};
-		socket_inet_ntop(AF_INET, &(((struct sockaddr_in*)&sock_addr)->sin_addr), cli_ip, sizeof(cli_ip));
-		observer_.OnAccept(this, c, *(struct sockaddr_in*)&((struct sockaddr_in*)&sock_addr)->sin_addr);
+		socket_inet_ntop(AF_INET, &(reinterpret_cast<struct sockaddr_in*>(&sock_addr)->sin_addr), cli_ip,
+		                 sizeof(cli_ip));
+		observer_.OnAccept(
+			this, c,
+			*reinterpret_cast<struct sockaddr_in*>(&reinterpret_cast<struct sockaddr_in*>(&sock_addr)->sin_addr));
 		std::unique_lock<std::mutex> lock(client_mutex_);
 		clients_.insert({g_client_id, std::move(client)});
 	}
@@ -150,7 +153,7 @@ void shadow_tls_server::client_routine(int id)
 
 	debug_log("client routine %d begin\n", GetCurrentThreadId());
 
-	routine_context* ctx = new routine_context();
+	auto ctx = new routine_context();
 	ctx->type = kContextServer;
 	ctx->src_sock = it->second.s;
 
@@ -166,11 +169,6 @@ void shadow_tls_server::client_routine(int id)
 		}
 
 		int retsel = sel.Select(3 * 1000);
-		if (retsel < 0)
-		{
-			break;
-		}
-
 		if (sel.IsException())
 		{
 			continue;
@@ -181,11 +179,16 @@ void shadow_tls_server::client_routine(int id)
 			continue;
 		}
 
+		if (retsel < 0)
+		{
+			break;
+		}
+
+
 		if (sel.Write_FD_ISSET(it->second.s))
 		{
-			if(!it->second.handshaked)
+			if (!it->second.handshaked)
 			{
-				
 			}
 			int sent = ::send(it->second.s, (const char*)it->second.data.data(), it->second.data.size(), 0);
 			if (sent <= 0)
@@ -200,9 +203,9 @@ void shadow_tls_server::client_routine(int id)
 			if (!it->second.handshaked)
 			{
 				int err;
-				shadow_client *cli = new shadow_client(ctx->src_sock);
+				auto cli = new shadow_client(ctx->src_sock);
 				SOCKET remote = cli->connect(socket_address(shadow_doamin_.c_str()), err);
-				if(remote == INVALID_SOCKET)
+				if (remote == INVALID_SOCKET)
 				{
 					delete cli;
 					debug_log("connect tls remote failed\n");
@@ -210,7 +213,7 @@ void shadow_tls_server::client_routine(int id)
 				}
 				ctx->dst_sock = remote;
 
-				if(cli->handshake() < 0)
+				if (cli->handshake() < 0)
 				{
 					delete cli;
 					debug_log("handshake failed\n");
@@ -224,16 +227,16 @@ void shadow_tls_server::client_routine(int id)
 				//}
 				//WaitForSingleObject(handle, INFINITE);
 				debug_log("handshake finished\n");
+
+				//OK GO GO GO
 				delete cli;
 				it->second.handshaked = true;
 			}
 			else
 			{
-
 			}
 		}
 	}
 	observer_.OnError(this, WSAGetLastError());
 	debug_log("client routine %d end\n", GetCurrentThreadId());
 }
-
